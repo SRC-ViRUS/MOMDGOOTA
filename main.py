@@ -9,7 +9,7 @@ from telethon.tl.functions.messages import GetFullChatRequest
 # بيانات الاتصال
 api_id = 24087692
 api_hash = '58bbe23b487e232699d93f1db818a98d'
-session_string = "1ApWapzMBuxTL1qnTZUK7UqvewYm0Tt61id0K4qsYkrB853FfDGuqFVzImvMrx-w_6frK50fgV-bLcVrPvZEme7d_Jl3FvV562HPMv9majShXEpi9IoONZZ2yW2BHBx7Glv1YIwTLuG1olGITS7GQGV1fVPnhOTAld8aLvIA1m_BoBL8dFPo3TaZKM0Fm2baBXTtEW7qGeFWKj2N6dNXvj7vXqcBXYnH7ZtSGSphSZJfQQtM1NQMnkC2_bZaxu7ImqRyJVWhPBuPbRPDU4QmT9MCRaKYxwUt6N-AkoXKu3hOh4du5JnnLHW4a_nwzSuvWNlzB03HykDrgaJf1quAxGLyDUpys9Ek=" 
+session_string = "1ApWapzMBu0ivnheKrzAuzLihTMiNKMOurFuPNZJnqUpQxByZCzW3pqY9n1L3u2tXJ8oBValiSz8eaK_2M4MBSyLfIetg1SpTm665HNI2vcHWjHaIrWeVGsYYIxIbrnuw8k4vZBOtskw1Lb6lAbBwFfU7ankI3bHNNwZ5jrEhidlP2qi77A53r9m-SoZmoPCcXMNd9TvTLDImAGxslVEtSEQJbfFTnb0LTcGVOfYePGbywRlDQnmFF0uuCRG03iy4eMVjXVQLgW2b_OcfFoWZqLuGDMQIqKxvmWnpL_cpG5hETUGtzbZBjT1Z447_g7FsQQcUeVmEaVpuNY5WLYXqPRbQr-3UUAk="
 
 client = TelegramClient(StringSession(session_string), api_id, api_hash)
 os.makedirs("downloads", exist_ok=True)
@@ -18,42 +18,59 @@ os.makedirs("downloads", exist_ok=True)
 muted_private = set()
 muted_groups = {}
 previous_name = None
+change_name_task = None  # مهمة تغيير الاسم التلقائي
 
-# --------- تغيير الاسم مؤقتاً ---------
-@client.on(events.NewMessage(pattern=r"\.اسم مؤقت"))
-async def change_name_once(event):
+# دالة للتحقق من صاحب البوت (مالك)
+async def is_owner(event):
+    me = await client.get_me()
+    return event.sender_id == me.id
+
+# --------- تغيير الاسم تلقائيًا كل دقيقة ---------
+async def change_name_periodically():
     global previous_name
-    try:
-        me = await client.get_me()
-        previous_name = me.first_name
+    me = await client.get_me()
+    previous_name = me.first_name
+    while True:
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3)
         name = now.strftime('%I:%M')
-        await client(UpdateProfileRequest(first_name=name))
-        msg = await event.edit(f"✅ تم تغيير الاسم مؤقتًا إلى: {name}")
-        await asyncio.sleep(1)
-        await msg.delete()
-    except FloodWaitError as e:
-        await asyncio.sleep(e.seconds)
-    except Exception as err:
-        await event.reply(f"خطأ: {err}")
+        try:
+            await client(UpdateProfileRequest(first_name=name))
+        except Exception as e:
+            print(f"خطأ بتغيير الاسم: {e}")
+        await asyncio.sleep(60)
+
+@client.on(events.NewMessage(pattern=r"\.اسم مؤقت"))
+async def start_changing_name(event):
+    global change_name_task
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
+    if change_name_task and not change_name_task.done():
+        return await event.reply("🔄 تغيير الاسم التلقائي مفعل مسبقًا.")
+    change_name_task = asyncio.create_task(change_name_periodically())
+    await event.reply("✅ بدأ تغيير الاسم التلقائي كل دقيقة.")
 
 @client.on(events.NewMessage(pattern=r"\.ايقاف الاسم"))
-async def revert_name(event):
-    global previous_name
+async def stop_changing_name(event):
+    global change_name_task, previous_name
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
+    if change_name_task:
+        change_name_task.cancel()
+        change_name_task = None
     if previous_name:
         try:
             await client(UpdateProfileRequest(first_name=previous_name))
-            msg = await event.edit("🛑 تم إرجاع الاسم السابق.")
-            await asyncio.sleep(1)
-            await msg.delete()
+            await event.reply("🛑 تم إيقاف تغيير الاسم وإرجاع الاسم السابق.")
         except Exception as e:
             await event.reply(f"خطأ: {e}")
     else:
-        await event.reply("❌ لا يوجد اسم محفوظ لإرجاعه.")
+        await event.reply("❌ لا يوجد اسم سابق محفوظ.")
 
 # --------- فحص ---------
 @client.on(events.NewMessage(pattern=r"\.فحص"))
 async def ping(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     msg = await event.edit("✅ البوت شغال وبأفضل حال!")
     await client.send_message("me", "✨ حياتي الصعب، البوت شغال.")
     await asyncio.sleep(10)
@@ -62,6 +79,8 @@ async def ping(event):
 # --------- كشف معلومات القروب أو القناة ---------
 @client.on(events.NewMessage(pattern=r"\.كشف"))
 async def cmd_kashf(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     chat = await event.get_chat()
     try:
         if getattr(chat, 'megagroup', False) or getattr(chat, 'broadcast', False):
@@ -87,6 +106,8 @@ async def cmd_kashf(event):
 # --------- كتم / فك كتم ---------
 @client.on(events.NewMessage(pattern=r"\.كتم$", func=lambda e: e.is_reply))
 async def mute_user(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     reply = await event.get_reply_message()
     if reply:
         uid, cid = reply.sender_id, event.chat_id
@@ -97,6 +118,8 @@ async def mute_user(event):
 
 @client.on(events.NewMessage(pattern=r"\.الغاء الكتم$", func=lambda e: e.is_reply))
 async def unmute_user(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     reply = await event.get_reply_message()
     if reply:
         uid, cid = reply.sender_id, event.chat_id
@@ -107,6 +130,8 @@ async def unmute_user(event):
 
 @client.on(events.NewMessage(pattern=r"\.قائمة الكتم$"))
 async def list_muted(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     text = "📋 المكتومين:\n"
     for uid in muted_private:
         try:
@@ -131,6 +156,8 @@ async def list_muted(event):
 
 @client.on(events.NewMessage(pattern=r"\.مسح الكتم$"))
 async def clear_mutes(event):
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
     muted_private.clear()
     muted_groups.clear()
     msg = await event.edit("🗑️ تم مسح المكتومين.")
@@ -154,7 +181,20 @@ async def handle_incoming(event):
 # --------- عرض الأوامر ---------
 @client.on(events.NewMessage(pattern=r"\.اوامر"))
 async def list_commands(event):
-    await event.respond("🧠 أوامر البوت:\n.فحص\n.كشف\n.كتم\n.الغاء الكتم\n.اسم مؤقت\n.ايقاف الاسم\n.قائمة الكتم\n.مسح الكتم")
+    if not await is_owner(event):
+        return await event.reply("🚫 هذا الأمر خاص بالمالك فقط.")
+    commands_text = (
+        "🧠 قائمة أوامر البوت:\n\n"
+        ".فحص - التحقق من أن البوت يعمل\n"
+        ".كشف - عرض معلومات القروب أو القناة\n"
+        ".كتم - كتم المستخدم (بالرد على رسالته)\n"
+        ".الغاء الكتم - فك كتم المستخدم (بالرد على رسالته)\n"
+        ".قائمة الكتم - عرض جميع المستخدمين المكتومين\n"
+        ".مسح الكتم - إزالة جميع الكتم\n"
+        ".اسم مؤقت - تشغيل تغيير الاسم التلقائي حسب الوقت (كل دقيقة)\n"
+        ".ايقاف الاسم - إيقاف تغيير الاسم وإرجاع الاسم السابق\n"
+    )
+    await event.respond(commands_text)
 
 # --------- تشغيل البوت ---------
 async def main():
